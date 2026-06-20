@@ -1,12 +1,10 @@
-# Willy Werkel Fix
+# Gary Gadget: Building Cars — Fix
 
-A one-click installer that makes **Autos bauen mit Willy Werkel** (English: **Gary Gadget: Building Cars**) run on modern **Windows 10 & 11**.
+A one-click installer that makes **Gary Gadget: Building Cars** (German original: **Autos bauen mit Willy Werkel**) run on modern **Windows 10 & 11**.
 
 🎮 Game disc image (ISO): **https://archive.org/details/autos-bauen**
 
----
-
-## How to install (English)
+## How to install
 
 1. Download **`WillyWerkel-Setup.exe`** from the [**Releases**](../../releases) page.
 2. Download the game from **https://archive.org/details/autos-bauen** (the `.iso` file).
@@ -21,7 +19,13 @@ A one-click installer that makes **Autos bauen mit Willy Werkel** (English: **Ga
 
 ---
 
-## Installation (Deutsch)
+# Autos bauen mit Willy Werkel — Fix
+
+Ein Ein-Klick-Installer, der **Autos bauen mit Willy Werkel** (englischer Titel: **Gary Gadget: Building Cars**) auf modernem **Windows 10 & 11** lauffähig macht.
+
+🎮 Spiel-Abbild (ISO): **https://archive.org/details/autos-bauen**
+
+## Installation
 
 1. Lade **`WillyWerkel-Setup.exe`** von der [**Releases**](../../releases)-Seite herunter.
 2. Lade das Spiel von **https://archive.org/details/autos-bauen** herunter (die `.iso`-Datei).
