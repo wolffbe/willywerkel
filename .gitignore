@@ -1,0 +1,5 @@
+# build output (distributed via Releases)
+WillyWerkel-Setup.exe
+*.exe
+bin/
+obj/
