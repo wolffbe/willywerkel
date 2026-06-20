@@ -87,7 +87,9 @@ class WillyRun
 
         try { using (var k = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"))
                   k.SetValue(exe, "~ 256COLOR HIGHDPIAWARE", RegistryValueKind.String); } catch {}
-        if (!Directory.Exists("B:\\Movies")) Shell("subst.exe", "B: \"" + cd + "\"");
+        // the 1997 game scans drive letters for its data; map B: just while it runs
+        bool mappedB = false;
+        if (!Directory.Exists("B:\\Movies")) { Shell("subst.exe", "B: \"" + cd + "\""); mappedB = true; }
 
         original = new DEVMODE(); original.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
         EnumDisplaySettings(null, ENUM_CURRENT_SETTINGS, ref original);
@@ -124,7 +126,7 @@ class WillyRun
                 Thread.Sleep(120);
             }
         }
-        finally { RestoreDesktop(h); }
+        finally { RestoreDesktop(h); if (mappedB) Shell("subst.exe", "B: /D"); } // remove the temporary B: drive
     }
 
     static void Shell(string f, string a)
