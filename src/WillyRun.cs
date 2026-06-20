@@ -6,9 +6,10 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
 // Launcher for Autos bauen mit Willy Werkel.
-// Sets 640x480 (fullscreen), runs the game, and ALWAYS restores the
-// original screen resolution when the game closes (even if it is killed).
-// Pass /fenster (or /windowed) to skip the resolution change.
+// Runs the game at 640x480 fullscreen. Restores the original resolution + taskbar
+// whenever the game loses focus (Alt-Tab, Windows key) and re-applies fullscreen
+// when it returns. Always restores on exit. Alt+F4 kills the game instantly.
+// Pass /fenster (or /windowed) to run in a plain 640x480 window instead.
 class WillyRun
 {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -35,16 +36,43 @@ class WillyRun
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
+
     const int ENUM_CURRENT_SETTINGS = -1, CDS_FULLSCREEN = 4, DISP_CHANGE_SUCCESSFUL = 0;
     const int DM_BITSPERPEL = 0x40000, DM_PELSWIDTH = 0x80000, DM_PELSHEIGHT = 0x100000;
-    const int SW_SHOW = 5, SW_RESTORE = 9;
+
+    static DEVMODE original;
+    static bool changed;            // we changed the resolution and owe a restore
+    static IntPtr tray = IntPtr.Zero;
 
     static void ForceForeground(IntPtr h)
     {
-        ShowWindow(h, SW_RESTORE); ShowWindow(h, SW_SHOW);
-        // tapping ALT lifts Windows' foreground lock so SetForegroundWindow works for another process
-        keybd_event(0x12, 0, 0, 0); keybd_event(0x12, 0, 2, 0);
+        ShowWindow(h, 9); ShowWindow(h, 5); // SW_RESTORE, SW_SHOW
+        keybd_event(0x12, 0, 0, 0); keybd_event(0x12, 0, 2, 0); // tap ALT to lift the foreground lock
         SetForegroundWindow(h); BringWindowToTop(h); SetActiveWindow(h);
+    }
+
+    static void ApplyFullscreen(IntPtr h)
+    {
+        DEVMODE cur = new DEVMODE(); cur.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+        EnumDisplaySettings(null, ENUM_CURRENT_SETTINGS, ref cur);
+        if (cur.dmPelsWidth != 640 || cur.dmPelsHeight != 480)
+        {
+            DEVMODE dm = original; dm.dmPelsWidth = 640; dm.dmPelsHeight = 480; dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+            if (ChangeDisplaySettings(ref dm, CDS_FULLSCREEN) == DISP_CHANGE_SUCCESSFUL) changed = true;
+        }
+        tray = FindWindow("Shell_TrayWnd", null); if (tray != IntPtr.Zero) ShowWindow(tray, 0); // hide taskbar
+        int w = GetSystemMetrics(0), ht = GetSystemMetrics(1);
+        SetWindowPos(h, (IntPtr)(-1), 0, 0, w, ht, 0x40); // HWND_TOPMOST, SWP_SHOWWINDOW
+        ForceForeground(h);
+    }
+
+    static void RestoreDesktop(IntPtr h)
+    {
+        if (tray != IntPtr.Zero) ShowWindow(tray, 5);                       // show taskbar
+        if (changed) { DEVMODE o = original; o.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL; ChangeDisplaySettings(ref o, 0); changed = false; }
+        if (h != IntPtr.Zero) SetWindowPos(h, (IntPtr)(-2), 0, 0, 0, 0, 0x13); // HWND_NOTOPMOST, NOSIZE|NOMOVE|NOACTIVATE
     }
 
     static void Main(string[] args)
@@ -55,83 +83,50 @@ class WillyRun
         string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
         string gameDir = Path.Combine(baseDir, "Game");
         string exe = Path.Combine(gameDir, "WILLY32.EXE");
-        string cd  = Path.Combine(baseDir, "CD");
+        string cd = Path.Combine(baseDir, "CD");
 
-        // 256-colour compatibility for the game (per-app, restores itself)
         try { using (var k = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"))
                   k.SetValue(exe, "~ 256COLOR HIGHDPIAWARE", RegistryValueKind.String); } catch {}
-
-        // map B: to the game data if not already mapped
         if (!Directory.Exists("B:\\Movies")) Shell("subst.exe", "B: \"" + cd + "\"");
 
-        // remember current resolution, switch to 640x480
-        DEVMODE original = new DEVMODE(); original.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
-        bool haveOrig = EnumDisplaySettings(null, ENUM_CURRENT_SETTINGS, ref original);
-        bool changed = false;
-        if (!windowed && haveOrig && !(original.dmPelsWidth == 640 && original.dmPelsHeight == 480))
+        original = new DEVMODE(); original.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+        EnumDisplaySettings(null, ENUM_CURRENT_SETTINGS, ref original);
+        if (!windowed && !(original.dmPelsWidth == 640 && original.dmPelsHeight == 480))
         {
-            DEVMODE dm = original;
-            dm.dmPelsWidth = 640; dm.dmPelsHeight = 480;
-            dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
-            changed = (ChangeDisplaySettings(ref dm, CDS_FULLSCREEN) == DISP_CHANGE_SUCCESSFUL);
+            DEVMODE dm = original; dm.dmPelsWidth = 640; dm.dmPelsHeight = 480; dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+            if (ChangeDisplaySettings(ref dm, CDS_FULLSCREEN) == DISP_CHANGE_SUCCESSFUL) changed = true;
         }
 
-        IntPtr tray = IntPtr.Zero;
+        IntPtr h = IntPtr.Zero;
         try
         {
             if (!File.Exists(exe)) return;
             Process p = Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = gameDir, UseShellExecute = true });
-            if (p != null)
-            {
-                // Alt+F4 anywhere instantly terminates the game
-                var watcher = new Thread(delegate()
-                {
-                    while (!p.HasExited)
-                    {
-                        if ((GetAsyncKeyState(0x12) & 0x8000) != 0 && (GetAsyncKeyState(0x73) & 0x8000) != 0) // VK_MENU + VK_F4
-                        { try { p.Kill(); } catch {} return; }
-                        Thread.Sleep(40);
-                    }
-                });
-                watcher.IsBackground = true; watcher.Start();
+            if (p == null) return;
+            int pid = p.Id;
 
-                // find the game window
-                IntPtr h = IntPtr.Zero;
-                for (int i = 0; i < 80 && !p.HasExited; i++)
+            for (int i = 0; i < 80 && !p.HasExited; i++) { p.Refresh(); h = p.MainWindowHandle; if (h != IntPtr.Zero) break; Thread.Sleep(250); }
+
+            if (!windowed && h != IntPtr.Zero) ApplyFullscreen(h);
+            else if (h != IntPtr.Zero) ForceForeground(h);
+
+            string state = "fs"; // fullscreen currently applied
+            while (!p.HasExited)
+            {
+                if ((GetAsyncKeyState(0x12) & 0x8000) != 0 && (GetAsyncKeyState(0x73) & 0x8000) != 0) { try { p.Kill(); } catch {} break; } // Alt+F4
+                if (!windowed && h != IntPtr.Zero)
                 {
-                    p.Refresh(); h = p.MainWindowHandle;
-                    if (h != IntPtr.Zero) break;
-                    System.Threading.Thread.Sleep(250);
+                    IntPtr fg = GetForegroundWindow(); int fgpid; GetWindowThreadProcessId(fg, out fgpid);
+                    bool gameFg = (fgpid == pid);
+                    if (gameFg && state != "fs") { ApplyFullscreen(h); state = "fs"; }            // returned to game -> re-apply
+                    else if (!gameFg && state == "fs") { RestoreDesktop(h); state = "out"; }       // Alt-Tab / Win key -> restore
                 }
-                if (h != IntPtr.Zero && !windowed)
-                {
-                    // hide the taskbar and make the game cover the whole screen on top of everything
-                    tray = FindWindow("Shell_TrayWnd", null);
-                    if (tray != IntPtr.Zero) ShowWindow(tray, 0); // SW_HIDE
-                    int sw = GetSystemMetrics(0), sh = GetSystemMetrics(1); // SM_CXSCREEN / SM_CYSCREEN
-                    for (int k = 0; k < 8 && !p.HasExited; k++)
-                    {
-                        ForceForeground(h);
-                        SetWindowPos(h, (IntPtr)(-1), 0, 0, sw, sh, 0x0040); // HWND_TOPMOST, SWP_SHOWWINDOW
-                        System.Threading.Thread.Sleep(400);
-                    }
-                }
-                else if (h != IntPtr.Zero)
-                {
-                    for (int k = 0; k < 8 && !p.HasExited; k++) { ForceForeground(h); System.Threading.Thread.Sleep(400); }
-                }
-                p.WaitForExit();
+                Thread.Sleep(120);
             }
         }
-        finally
-        {
-            if (tray != IntPtr.Zero) ShowWindow(tray, 5); // SW_SHOW - bring the taskbar back
-            if (changed) { DEVMODE o = original; o.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL; ChangeDisplaySettings(ref o, 0); }
-        }
+        finally { RestoreDesktop(h); }
     }
 
     static void Shell(string f, string a)
-    {
-        try { var p = Process.Start(new ProcessStartInfo(f, a) { UseShellExecute = false, CreateNoWindow = true }); p.WaitForExit(); } catch {}
-    }
+    { try { var p = Process.Start(new ProcessStartInfo(f, a) { UseShellExecute = false, CreateNoWindow = true }); p.WaitForExit(); } catch {} }
 }
